@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage — NextUp</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap wide">
+  <header class="top">
+    <h1 id="partyTitle">…</h1>
+    <nav>
+      <a href="" id="uploadLink">Contribute page</a>
+      <a href="" id="showLink" target="_blank">Open show ↗</a>
+    </nav>
+  </header>
+
+  <div class="card">
+    <h3>Share</h3>
+    <div class="qr-block">
+      <div id="qr"></div>
+      <div class="qr-info">
+        <p class="muted">Scan or share this link to let people contribute:</p>
+        <p><code id="shareUrl"></code></p>
+        <p class="muted" style="font-size:0.8rem">Show URL: <code id="showUrlTxt"></code></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Upcoming</h3>
+    <div class="muted" id="upcomingEmpty" style="display:none">Nothing queued.</div>
+    <ul class="list" id="upcoming"></ul>
+  </div>
+
+  <div class="card">
+    <h3>Currently showing</h3>
+    <ul class="list" id="current"></ul>
+    <div class="muted" id="currentEmpty" style="display:none">Nothing on stage yet.</div>
+  </div>
+
+  <div class="card">
+    <h3>Already shown</h3>
+    <div class="muted" id="pastEmpty" style="display:none">Nothing yet.</div>
+    <ul class="list" id="past"></ul>
+  </div>
+
+  <footer class="foot">Tip: open the show URL on the TV or projector — keyboard arrows / space advance.</footer>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+const slug = location.pathname.split('/').filter(Boolean)[0];
+let baseUrl = '';
+
+function renderItem(it, { isCurrent=false, isNext=false, isShown=false, index=0, canMoveUp=false, canMoveDown=false } = {}) {
+  const li = document.createElement('li');
+  if (isNext) li.classList.add('locked');
+  if (isShown) li.classList.add('shown');
+
+  let badge = '';
+  if (isCurrent) badge = '<span class="badge now">On stage</span>';
+  else if (isNext) badge = '<span class="badge next">Next up</span>';
+  else if (isShown) badge = '<span class="badge">Shown · ' + escapeHTML(timeShort(it.shownAt)) + '</span>';
+  else badge = '<span class="badge">' + (index + 1) + '</span>';
+
+  const meta = document.createElement('div');
+  meta.className = 'item-meta';
+  meta.innerHTML = `
+    <div class="item-title">${escapeHTML(typeLabel(it.type))}${it.contributor ? ' · ' + escapeHTML(it.contributor) : ''}${it.caption ? ' — ' + escapeHTML(it.caption) : ''}</div>
+    <div class="item-sub">${escapeHTML(itemPreview(it))}</div>
+  `;
+
+  const controls = document.createElement('div');
+  controls.className = 'controls';
+
+  if (!isCurrent && !isShown) {
+    const up = document.createElement('button'); up.textContent = '↑';
+    up.disabled = !canMoveUp;
+    up.addEventListener('click', () => move(it.id, 'up'));
+    const down = document.createElement('button'); down.textContent = '↓';
+    down.disabled = !canMoveDown;
+    down.addEventListener('click', () => move(it.id, 'down'));
+    controls.appendChild(up); controls.appendChild(down);
+  }
+  const del = document.createElement('button');
+  del.className = 'danger';
+  del.textContent = 'Delete';
+  del.addEventListener('click', () => remove(it.id));
+  controls.appendChild(del);
+
+  li.innerHTML = badge;
+  li.appendChild(meta);
+  li.appendChild(controls);
+  return li;
+}
+
+async function move(id, dir) {
+  try {
+    await api('/api/' + slug + '/items/' + id + '/move', { method: 'POST', body: { direction: dir } });
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+async function remove(id) {
+  if (!confirm('Delete this item?')) return;
+  try {
+    await api('/api/' + slug + '/items/' + id, { method: 'DELETE' });
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+
+async function refresh() {
+  const state = await api('/api/' + slug);
+  document.getElementById('partyTitle').textContent = state.title + ' · manage';
+  document.title = state.title + ' — manage';
+
+  const cfg = await api('/api/config');
+  baseUrl = cfg.baseUrl;
+  const upload = baseUrl + '/' + slug;
+  const show = baseUrl + '/' + slug + '/show';
+  document.getElementById('shareUrl').textContent = upload;
+  document.getElementById('showUrlTxt').textContent = show;
+  document.getElementById('uploadLink').href = '/' + slug;
+  document.getElementById('showLink').href = '/' + slug + '/show';
+  mountQR(document.getElementById('qr'), upload, 180);
+
+  const cur = state.currentIndex;
+  const items = state.items;
+
+  // Upcoming (indices cur+1 .. end)
+  const upcomingEl = document.getElementById('upcoming');
+  upcomingEl.innerHTML = '';
+  const upcoming = items.slice(cur + 1);
+  if (!upcoming.length) document.getElementById('upcomingEmpty').style.display = '';
+  else document.getElementById('upcomingEmpty').style.display = 'none';
+  upcoming.forEach((it, i) => {
+    const absIdx = cur + 1 + i;
+    const isNext = (i === 0);
+    // Can move up if previous index is also in upcoming and not the "on stage" item.
+    const canMoveUp = absIdx > cur + 1; // can swap with upcoming above, but not into stage slot
+    const canMoveDown = absIdx < items.length - 1;
+    upcomingEl.appendChild(renderItem(it, { isNext, index: i, canMoveUp, canMoveDown }));
+  });
+
+  // Currently showing
+  const curEl = document.getElementById('current');
+  curEl.innerHTML = '';
+  if (cur >= 0 && items[cur]) {
+    curEl.appendChild(renderItem(items[cur], { isCurrent: true }));
+    document.getElementById('currentEmpty').style.display = 'none';
+  } else {
+    document.getElementById('currentEmpty').style.display = '';
+  }
+
+  // Past
+  const pastEl = document.getElementById('past');
+  pastEl.innerHTML = '';
+  const past = items.slice(0, Math.max(0, cur));
+  if (!past.length) document.getElementById('pastEmpty').style.display = '';
+  else document.getElementById('pastEmpty').style.display = 'none';
+  // newest shown on top
+  past.slice().reverse().forEach(it => pastEl.appendChild(renderItem(it, { isShown: true })));
+}
+
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

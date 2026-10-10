@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Show</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="show-mode">
+<div class="stage" id="stage">
+  <div class="content empty" id="content">Press → to start.</div>
+</div>
+<div class="show-controls">
+  <button id="prev" title="Previous (←)">← Prev</button>
+  <button id="next" title="Next (→ or Space)">Next →</button>
+</div>
+<div class="show-meta" id="meta"></div>
+
+<script src="/static/app.js"></script>
+<script>
+const slug = location.pathname.split('/').filter(Boolean)[0];
+let state = null;
+
+function youTubeId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1);
+    if (u.searchParams.get('v')) return u.searchParams.get('v');
+    const m = u.pathname.match(/\/(?:embed|shorts)\/([^/?#]+)/);
+    if (m) return m[1];
+  } catch (_) {}
+  return null;
+}
+
+function render() {
+  const stage = document.getElementById('stage');
+  const meta = document.getElementById('meta');
+  stage.innerHTML = '';
+  if (!state) return;
+  const idx = state.currentIndex;
+  if (idx < 0) {
+    stage.innerHTML = '<div class="content empty">Ready. Press → to show the next item.</div>';
+    meta.textContent = state.items.length + ' queued';
+    return;
+  }
+  const item = state.items[idx];
+  if (!item) {
+    stage.innerHTML = '<div class="content empty">— end —</div>';
+    meta.textContent = '';
+    return;
+  }
+  let el;
+  if (item.type === 'image') {
+    el = document.createElement('img');
+    el.src = item.content;
+    el.alt = item.caption || '';
+  } else if (item.type === 'youtube') {
+    const id = youTubeId(item.content);
+    if (id) {
+      el = document.createElement('iframe');
+      el.width = Math.floor(window.innerWidth * 0.9);
+      el.height = Math.floor(window.innerHeight * 0.85);
+      el.src = 'https://www.youtube.com/embed/' + id + '?autoplay=1&rel=0';
+      el.setAttribute('frameborder', '0');
+      el.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+      el.setAttribute('allowfullscreen', 'true');
+    } else {
+      el = document.createElement('div');
+      el.className = 'content url-content';
+      el.innerHTML = '<a href="' + escapeHTML(item.content) + '" target="_blank">' + escapeHTML(item.content) + '</a>';
+    }
+  } else if (item.type === 'url') {
+    el = document.createElement('div');
+    el.className = 'content url-content';
+    el.innerHTML = '<a href="' + escapeHTML(item.content) + '" target="_blank">' + escapeHTML(item.content) + '</a>';
+  } else if (item.type === 'text') {
+    el = document.createElement('div');
+    el.className = 'content text-content';
+    el.textContent = item.content;
+  } else {
+    el = document.createElement('div');
+    el.className = 'content';
+    el.textContent = String(item.content || '');
+  }
+  stage.appendChild(el);
+
+  const parts = [typeLabel(item.type)];
+  if (item.contributor) parts.push('by ' + item.contributor);
+  if (item.caption) parts.push(item.caption);
+  parts.push((idx + 1) + ' / ' + state.items.length);
+  meta.textContent = parts.join(' · ');
+}
+
+async function refresh() {
+  try {
+    state = await api('/api/' + slug);
+    render();
+  } catch (e) {
+    document.getElementById('stage').innerHTML =
+      '<div class="content empty">Error: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+async function next() {
+  state = await api('/api/' + slug + '/show/next', { method: 'POST' });
+  render();
+}
+async function prev() {
+  state = await api('/api/' + slug + '/show/prev', { method: 'POST' });
+  render();
+}
+
+document.getElementById('next').addEventListener('click', next);
+document.getElementById('prev').addEventListener('click', prev);
+document.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+  else if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+});
+
+refresh();
+</script>
+</body>
+</html>

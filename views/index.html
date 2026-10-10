@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NextUp — create a party queue</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 id="appName">NextUp</h1>
+    <div class="sub">A shared "what's next" stack for your party.</div>
+  </header>
+
+  <div class="card">
+    <h3>Start a new nextup</h3>
+    <p class="muted">Pick a short, vaguely-secret slug. That's the only thing standing between your party and the internet.</p>
+    <form id="createForm">
+      <div class="row">
+        <div>
+          <label for="slug">Slug</label>
+          <input type="text" id="slug" name="slug" placeholder="wvgd, saturdaynight, etc." autocomplete="off" pattern="[a-z0-9][a-z0-9-]{1,31}">
+        </div>
+        <div>
+          <label for="title">Title (optional)</label>
+          <input type="text" id="title" name="title" placeholder="Weekend Vibes" autocomplete="off">
+        </div>
+      </div>
+      <div style="margin-top: 12px; display: flex; gap: 10px;">
+        <button type="submit">Create</button>
+        <button type="button" class="secondary" id="randomBtn">Use random slug</button>
+      </div>
+      <div class="error" id="err"></div>
+    </form>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <h3>Ready. Share these links:</h3>
+    <div class="qr-block">
+      <div id="qr"></div>
+      <div class="qr-info">
+        <p><strong>Contribute:</strong><br><a id="uploadLink" target="_blank"></a></p>
+        <p><strong>Manage:</strong><br><a id="manageLink" target="_blank"></a></p>
+        <p><strong>Show:</strong><br><a id="showLink" target="_blank"></a></p>
+      </div>
+    </div>
+  </div>
+
+  <p class="muted" style="margin-top:24px">
+    Have a slug already? Go to <code>/your-slug</code> to add to it, <code>/your-slug/manage</code> to moderate,
+    or <code>/your-slug/show</code> to present.
+  </p>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+(async function () {
+  const cfg = await api('/api/config');
+  document.getElementById('appName').textContent = cfg.appName;
+  document.title = cfg.appName + ' — create a party queue';
+
+  const form = document.getElementById('createForm');
+  const err = document.getElementById('err');
+  const slugInput = document.getElementById('slug');
+  const titleInput = document.getElementById('title');
+  const resultCard = document.getElementById('resultCard');
+
+  document.getElementById('randomBtn').addEventListener('click', () => {
+    slugInput.value = Math.random().toString(36).slice(2, 8);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.textContent = '';
+    try {
+      const r = await api('/api/create', {
+        method: 'POST',
+        body: { slug: slugInput.value, title: titleInput.value }
+      });
+      const base = cfg.baseUrl;
+      const uploadUrl = base + '/' + r.slug;
+      const manageUrl = base + '/' + r.slug + '/manage';
+      const showUrl = base + '/' + r.slug + '/show';
+      document.getElementById('uploadLink').href = uploadUrl;
+      document.getElementById('uploadLink').textContent = uploadUrl;
+      document.getElementById('manageLink').href = manageUrl;
+      document.getElementById('manageLink').textContent = manageUrl;
+      document.getElementById('showLink').href = showUrl;
+      document.getElementById('showLink').textContent = showUrl;
+      mountQR(document.getElementById('qr'), uploadUrl, 220);
+      resultCard.style.display = 'block';
+      resultCard.scrollIntoView({ behavior: 'smooth' });
+    } catch (e) {
+      err.textContent = e.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>

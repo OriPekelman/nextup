@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add to the queue</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1><span id="partyTitle">...</span></h1>
+    <nav><a href="" id="manageLink">Manage</a></nav>
+  </header>
+  <div class="sub muted" id="subline">Drop in something for the night — a picture, a poem, a link, a song.</div>
+
+  <div class="card">
+    <h3>Contribute</h3>
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-type="text">Text</div>
+      <div class="tab" data-type="image">Image</div>
+      <div class="tab" data-type="youtube">YouTube</div>
+      <div class="tab" data-type="url">Link</div>
+    </div>
+
+    <form id="addForm" autocomplete="off">
+      <!-- text panel -->
+      <div class="panel" data-panel="text">
+        <label for="text">Your text, poem, joke, quote…</label>
+        <textarea id="text" name="content" placeholder="Type or paste here"></textarea>
+      </div>
+      <!-- image panel -->
+      <div class="panel" data-panel="image" style="display:none">
+        <label for="file">Pick an image (max 20 MB)</label>
+        <input type="file" id="file" name="file" accept="image/*">
+      </div>
+      <!-- youtube panel -->
+      <div class="panel" data-panel="youtube" style="display:none">
+        <label for="yt">YouTube URL</label>
+        <input type="url" id="yt" placeholder="https://www.youtube.com/watch?v=...">
+      </div>
+      <!-- link panel -->
+      <div class="panel" data-panel="url" style="display:none">
+        <label for="url">Any URL</label>
+        <input type="url" id="url" placeholder="https://…">
+      </div>
+
+      <div class="row" style="margin-top: 14px;">
+        <div>
+          <label for="contributor">Your name (optional)</label>
+          <input type="text" id="contributor" maxlength="80" placeholder="Ori">
+        </div>
+        <div>
+          <label for="caption">Caption (optional)</label>
+          <input type="text" id="caption" maxlength="280" placeholder="a little thing I wrote">
+        </div>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <label for="position">Where in the queue?</label>
+        <select id="position">
+          <option value="end">At the end of the line (default)</option>
+          <option value="early">Right after "next up" — play me soon</option>
+          <option value="mid">Somewhere in the middle</option>
+        </select>
+        <div class="muted" style="margin-top:4px; font-size:0.8rem">
+          You can't take the "next up" slot — that's locked in.
+        </div>
+      </div>
+
+      <div style="margin-top: 16px; display:flex; gap:10px;">
+        <button type="submit" id="submitBtn">Add to queue</button>
+      </div>
+      <div class="error" id="err"></div>
+      <div class="ok" id="ok"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>What's coming</h3>
+    <div class="muted" id="queueEmpty" style="display:none">No one has added anything yet. Be the first.</div>
+    <ul class="list" id="queue"></ul>
+  </div>
+
+  <footer class="foot">NextUp · file-based party queue</footer>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+const slug = location.pathname.split('/').filter(Boolean)[0];
+document.getElementById('manageLink').href = '/' + slug + '/manage';
+
+let currentType = 'text';
+
+document.querySelectorAll('#tabs .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#tabs .tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentType = tab.dataset.type;
+    document.querySelectorAll('.panel').forEach(p => {
+      p.style.display = (p.dataset.panel === currentType) ? '' : 'none';
+    });
+  });
+});
+
+function renderQueue(state) {
+  const q = document.getElementById('queue');
+  q.innerHTML = '';
+  const upcoming = state.items.slice(state.currentIndex + 1);
+  if (!upcoming.length) {
+    document.getElementById('queueEmpty').style.display = '';
+    return;
+  }
+  document.getElementById('queueEmpty').style.display = 'none';
+  upcoming.forEach((it, i) => {
+    const li = document.createElement('li');
+    if (i === 0) li.classList.add('locked');
+    const badge = i === 0
+      ? '<span class="badge next">Next up</span>'
+      : '<span class="badge">' + (i + 1) + '</span>';
+    li.innerHTML = `
+      ${badge}
+      <div class="item-meta">
+        <div class="item-title">${escapeHTML(typeLabel(it.type))}${it.contributor ? ' · ' + escapeHTML(it.contributor) : ''}</div>
+        <div class="item-sub">${escapeHTML(itemPreview(it))}</div>
+      </div>
+    `;
+    q.appendChild(li);
+  });
+}
+
+async function refresh() {
+  const state = await api('/api/' + slug);
+  document.getElementById('partyTitle').textContent = state.title;
+  document.title = state.title + ' — add to queue';
+  renderQueue(state);
+  return state;
+}
+
+function positionFor(state, choice) {
+  const upcomingStart = state.currentIndex + 1;
+  const hasUpcoming = upcomingStart < state.items.length;
+  const end = state.items.length;
+  const minPos = hasUpcoming ? upcomingStart + 1 : upcomingStart;
+  if (choice === 'early') return minPos;
+  if (choice === 'mid') return Math.max(minPos, Math.floor((minPos + end) / 2));
+  return end;
+}
+
+document.getElementById('addForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  const ok = document.getElementById('ok');
+  err.textContent = ''; ok.textContent = '';
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  try {
+    const state = await api('/api/' + slug);
+    const pos = positionFor(state, document.getElementById('position').value);
+    const contributor = document.getElementById('contributor').value;
+    const caption = document.getElementById('caption').value;
+
+    if (currentType === 'image') {
+      const fileEl = document.getElementById('file');
+      if (!fileEl.files[0]) throw new Error('Pick an image first.');
+      const fd = new FormData();
+      fd.append('type', 'image');
+      fd.append('file', fileEl.files[0]);
+      fd.append('position', pos);
+      if (contributor) fd.append('contributor', contributor);
+      if (caption) fd.append('caption', caption);
+      await api('/api/' + slug + '/items', { method: 'POST', body: fd });
+    } else {
+      let content = '';
+      if (currentType === 'text') content = document.getElementById('text').value;
+      else if (currentType === 'youtube') content = document.getElementById('yt').value;
+      else if (currentType === 'url') content = document.getElementById('url').value;
+      if (!content.trim()) throw new Error('Write or paste something first.');
+      await api('/api/' + slug + '/items', {
+        method: 'POST',
+        body: { type: currentType, content, position: pos, contributor, caption }
+      });
+    }
+    ok.textContent = 'Added. Thanks!';
+    document.getElementById('text').value = '';
+    document.getElementById('yt').value = '';
+    document.getElementById('url').value = '';
+    document.getElementById('file').value = '';
+    document.getElementById('caption').value = '';
+    await refresh();
+    setTimeout(() => { ok.textContent = ''; }, 2500);
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refresh();
+// Light polling so folks see others' additions.
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
